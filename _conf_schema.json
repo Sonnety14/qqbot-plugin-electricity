@@ -1,0 +1,52 @@
+{
+  "enabled": {
+    "description": "启用每日查询和提醒（绑定同步由 bridge_enabled 控制）",
+    "type": "bool",
+    "default": false
+  },
+  "platform_id": {
+    "description": "QQ 平台实例 ID，启用桥接时必填；不是 QQ 号",
+    "type": "string",
+    "default": ""
+  },
+  "qq": {
+    "description": "仅供旧单用户数据迁移匹配；新安装留空，收件人以网站已验证绑定为准",
+    "type": "string",
+    "default": ""
+  },
+  "threshold": {
+    "description": "低余额阈值（元）",
+    "type": "float",
+    "default": 20
+  },
+  "hour": {
+    "description": "每日查询时间（北京时间整点）",
+    "type": "int",
+    "default": 9
+  },
+  "bridge_enabled": {
+    "description": "启用 electricity_bridge 多用户绑定同步",
+    "type": "bool",
+    "default": false
+  },
+  "backend_origin": {
+    "description": "桥接后端私网 HTTP origin，仅 IP 和可选端口，不带路径",
+    "type": "string",
+    "default": ""
+  },
+  "backend_host": {
+    "description": "明确的后端虚拟主机 Host，不带协议或路径",
+    "type": "string",
+    "default": ""
+  },
+  "bridge_token": {
+    "description": "专用 scoped bridge 令牌；推荐改用 ELECTRICITY_BRIDGE_TOKEN 环境变量",
+    "type": "string",
+    "default": ""
+  },
+  "account_url": {
+    "description": "用户更新电费授权的 HTTPS 页面，可选",
+    "type": "string",
+    "default": ""
+  }
+}

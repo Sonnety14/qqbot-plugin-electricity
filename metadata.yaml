@@ -1,0 +1,6 @@
+name: astrbot_plugin_electricity
+display_name: 电费余额提醒
+desc: 每日只读查询电费并发送低余额 QQ 提醒
+version: v0.8.3
+author: Sonnety14
+repo: "https://github.com/Sonnety14/qqbot-plugin-electricity"
