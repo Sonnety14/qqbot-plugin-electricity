@@ -24,9 +24,9 @@ async def main():
     group=Event('绑定宿舍',False);await plugin.handle(group)
     assert not group.stopped and not calls
     event=Event('绑定宿舍');await plugin.handle(event)
-    assert event.stopped and '每个自然月' in event.messages[0]
+    assert event.stopped and '24 小时' in event.messages[0]
     event=Event('天佑斋 012001');await plugin.handle(event)
-    assert event.stopped and '已同步网站' in event.messages[-1] and not plugin.qq_binding
+    assert event.stopped and '宿舍绑定成功' in event.messages[-1] and not plugin.qq_binding
     event=Event('绑定宿舍');await plugin.handle(event)
     event=Event('取消绑定');await plugin.handle(event)
     assert '保持不变' in event.messages[-1] and not plugin.qq_binding

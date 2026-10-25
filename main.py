@@ -45,8 +45,11 @@ class AccountWorker(ElectricityWorker):
 
     async def send(self,text):
         # Recheck recipient ownership immediately before an outbound message.
-        if not await self.owner.authorized(self.uid,self.version,str(self.config['qq'])):
+        items=(await self.owner.bridge_api('bindings'))['items']
+        binding=next((b for b in items if str(b['user_id'])==self.uid and b['version']==self.version and b['qq']==str(self.config['qq'])),None)
+        if not binding:
             raise RuntimeError('Binding revoked')
+        if not binding.get('alerts_enabled',True):return False
         await super().send(text)
 
 
@@ -168,6 +171,7 @@ class Electricity(Star):
                         worker.db.execute("INSERT INTO checks VALUES (?,1,?,'ok',?,NULL) ON CONFLICT(day) DO UPDATE SET status='ok',snapshot=excluded.snapshot,attempted=excluded.attempted",(datetime.now(CHINA).date().isoformat(),time.time(),json.dumps(binding['snapshot'])))
                     worker.set_state('active_version',version)
                 self.workers[uid]=worker
+            worker.config['alerts_enabled']=bool(binding.get('alerts_enabled',True))
             if time.time()-worker.last_health>=60:
                 await self.bridge_api('health',{'version':version,'state':worker.state('suspended') or 'active'})
                 worker.last_health=time.time()
@@ -196,15 +200,33 @@ class Electricity(Star):
     async def handle(self,event):
         if not event.is_private_chat() or event.get_platform_id()!=self.config.get('platform_id',''): return
         if await self.handle_dorm_binding(event): return
-        if event.message_str.strip() not in ('电费查询','电费状态'): return
+        command=event.message_str.strip()
+        if command not in ('电费查询','电费状态','电费预警'): return
+        event.stop_event()
         qq=str(event.get_sender_id())
         try:
+            if command=='电费预警':
+                result=await self.bridge_api('qq/alerts',{'qq':qq})
+                enabled=result['alerts_enabled']
+                for worker in self.workers.values():
+                    if str(worker.config['qq'])==qq:worker.config['alerts_enabled']=enabled
+                await event.send(event.plain_result('电费预警推送已'+('开启' if enabled else '关闭')+'。\n日常查询与宿舍绑定保持不变；发送“电费查询”可查看状态。'))
+                return
             bindings=(await self.bridge_api('bindings'))['items']
             matches=[b for b in bindings if b['qq']==qq]
-            if len(matches)!=1: return
+            if len(matches)!=1:
+                await event.send(event.plain_result('尚未找到有效的宿舍绑定，请私聊发送“绑定宿舍”。'));return
             binding=matches[0]; worker=self.workers.get(str(binding['user_id']))
-            if not worker or worker.version!=binding['version']: return
+            if not worker or worker.version!=binding['version']:
+                await event.send(event.plain_result('查询状态：绑定同步中，请稍后再查询。'));return
+            worker.config['alerts_enabled']=bool(binding.get('alerts_enabled',True))
             await worker.handle(event)
+        except httpx.HTTPStatusError as exc:
+            detail=None
+            if exc.response.status_code in (403,409):
+                try:detail=exc.response.json().get('detail')
+                except ValueError:pass
+            await event.send(event.plain_result(detail if isinstance(detail,str) else '电费服务暂时不可用，请稍后再试。'))
         except Exception:
             event.stop_event()
             await event.send(event.plain_result('电费服务暂时不可用，请稍后再试。'))
@@ -215,36 +237,36 @@ class Electricity(Star):
         if pending and pending['expires']<time.time():
             self.qq_binding.pop(qq,None);pending=None
         if text!='绑定宿舍' and not pending:return False
-        if text in ('电费查询','电费状态'):return False
+        if text in ('电费查询','电费状态','电费预警'):return False
         event.stop_event()
         async def say(message):await event.send(event.plain_result(message))
         try:
             if text=='绑定宿舍':
                 result=await self.bridge_api('qq/start',{'qq':qq})
                 self.qq_binding[qq]={'id':result['id'],'expires':time.time()+result['expires_in'],'submitted':False}
-                await say('绑定宿舍与电费提醒\n请在 10 分钟内发送宿舍号，例如：天佑斋 012001（1 栋 2 楼 1 号，格式示例）。\n支持天佑斋及鸿哲斋 2、3 栋。10 楼示例：鸿哲斋 0210001。\n发送宿舍号后会核对并完成绑定，与网站同步。每天北京时间 09:00 查询，低于 20 元时 QQ 私聊提醒，每天最多一次。\n※ 网站与 QQ 共用每个自然月一次的成功绑定额度；查询失败不扣次数。\n发送“取消绑定”可退出本次操作，不会解除已有绑定。')
+                await say('绑定宿舍与电费提醒\n请在 10 分钟内发送宿舍号，例如：天佑斋 012001（1 栋 2 楼 1 号）。\n支持天佑斋及鸿哲斋 2、3 栋。10 楼示例：鸿哲斋 0210001。\n发送宿舍号后会核对并完成绑定，无需网站账号或预先绑定 QQ。每天北京时间 09:00 查询，低于 20 元时 QQ 私聊提醒，每天最多一次。\n※ 每次成功绑定后需间隔 24 小时，按当前 QQ 计算冷却；查询失败不延长冷却。\n发送“取消绑定”可退出本次操作，不会解除已有绑定。')
                 return True
             if text=='取消绑定' and not pending['submitted']:
                 self.qq_binding.pop(qq,None)
                 await say('已退出本次绑定，原有宿舍绑定保持不变。');return True
             if pending['submitted']:
-                await say('宿舍正在核对和保存，请稍候。可到网站账号设置查看结果。');return True
+                await say('宿舍正在核对和保存，请稍候。稍后发送“电费查询”查看结果。');return True
             await self.bridge_api('qq/room',{'qq':qq,'id':pending['id'],'room':text})
             pending['submitted']=True
-            await say('正在核对宿舍并同步网站，请稍候。')
+            await say('正在核对宿舍，请稍候。')
             for _ in range(40):
                 result=await self.bridge_api('qq/status',{'qq':qq,'id':pending['id']})
                 if result['state']=='done':
                     self.qq_binding.pop(qq,None)
                     snapshot=result['snapshot']
-                    await say('宿舍绑定成功，已同步网站。\n'+snapshot['room']+'\n当前余额：'+snapshot['total']+' 元\n查询时间：'+snapshot['updated']+'\n每天 09:00 查询，低于 20 元时提醒。发送“电费查询”可查看最近结果。')
+                    await say('宿舍绑定成功。\n'+snapshot['room']+'\n当前余额：'+snapshot['total']+' 元\n查询时间：'+snapshot['updated']+'\n每天 09:00 查询，低于 20 元时提醒。发送“电费查询”可查看最近结果。')
                     return True
                 if result['state']=='failed':
                     self.qq_binding.pop(qq,None)
-                    await say('查询未成功，未修改原绑定，也未扣除本月次数。请核对宿舍号后重新发送“绑定宿舍”。');return True
+                    await say('查询未成功，未修改原绑定，也不会延长绑定冷却。请核对宿舍号后重新发送“绑定宿舍”。');return True
                 await asyncio.sleep(2)
             self.qq_binding.pop(qq,None)
-            await say('后台仍在处理，请到 你所使用的网站账号设置查看最终结果；暂时不要重复提交。')
+            await say('后台仍在处理，稍后发送“电费查询”查看最终结果；暂时不要重复提交。')
         except httpx.HTTPStatusError as exc:
             try: detail=exc.response.json().get('detail')
             except Exception: detail=None
@@ -252,7 +274,7 @@ class Electricity(Star):
             await say(detail if isinstance(detail,str) else '绑定服务暂不可用，请稍后重试。')
         except Exception:
             self.qq_binding.pop(qq,None)
-            await say('暂未获取到最终结果，请到 你所使用的网站账号设置核对；如未完成，请重新发送“绑定宿舍”。')
+            await say('暂未获取到最终结果，请稍后发送“电费查询”核对；如未完成，请重新发送“绑定宿舍”。')
         return True
 
     async def terminate(self):

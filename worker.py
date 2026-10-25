@@ -49,11 +49,12 @@ class ElectricityWorker(SessionAudit,Star):
         result=await asyncio.wait_for(platform.bot.call_action('send_private_msg',user_id=int(self.config['qq']),message=[{'type':'text','data':{'text':text}}]),20)
         if not isinstance(result,dict) or result.get('message_id') is None:raise RuntimeError('send not confirmed')
     async def notice(self,day,text):
+        if not self.config.get('alerts_enabled',True):return
         # Reserve before the send. A timeout must not produce repeated QQ messages.
         with self.db:
             changed=self.db.execute("UPDATE checks SET notice='sending' WHERE day=? AND notice IS NULL",(day,)).rowcount
         if not changed:return
-        try:await self.send(text);status='sent'
+        try:status='suppressed' if await self.send(text) is False else 'sent'
         except Exception:status='unknown'
         with self.db:self.db.execute('UPDATE checks SET notice=? WHERE day=?',(status,day))
     async def check(self,now):
@@ -98,12 +99,19 @@ class ElectricityWorker(SessionAudit,Star):
         if event.message_str.strip() not in ('电费查询','电费状态'):return
         event.stop_event()
         row=self.db.execute('SELECT * FROM checks ORDER BY day DESC LIMIT 1').fetchone()
+        states={'ok':'正常','checking':'正在查询','failed':'查询失败，等待重试','retry':'等待重试','auth':'授权失效，等待恢复','meter':'房间不一致，已暂停','stale':'数据已过期'}
+        now=datetime.now(CHINA)
+        status=states.get(row['status'],'等待查询') if row else '等待首次查询'
+        if row and row['day']!=now.date().isoformat():status='等待今日查询'
+        if not self.config.get('enabled',False):status='定时查询已停用'
+        if self.state('suspended'):status=states.get(self.state('suspended'),'查询已暂停')
         if self.state('suspended')=='auth':answer=self.auth_notice()
         elif self.state('suspended'):answer='电费查询的房间与绑定记录不一致，已暂停查询，请核对房间后重新确认绑定。'+self.renewal_hint()
         elif row and row['snapshot']:
             d=json.loads(row['snapshot']);answer='电费余额：'+d['total']+' 元\n'+self.reading_label()+d['updated']+'\n查询日期：'+row['day']+'\n每天 '+str(self.config.get('hour',9)).zfill(2)+':00 查询；低于 '+str(self.config.get('threshold',20))+' 元提醒。'
             if row['status']!='ok':answer+='\n最近查询未成功或数据已过时，请在微信核对。'
         else:answer='尚无有效电费查询记录。'
+        answer='查询状态：'+status+'\n电费预警：'+('已开启' if self.config.get('alerts_enabled',True) else '已关闭')+'\n'+answer
         await event.send(event.plain_result(answer))
     async def terminate(self):
         if self.task:
