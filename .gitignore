@@ -16,3 +16,9 @@ credentials.json
 accounts/
 plugin_data/
 config.local.json
+
+# Private authentication inputs
+wxy-cas-login*.json
+wxy-session*.txt
+*.tar*
+*.zip

@@ -42,7 +42,7 @@ async def exercise():
    if credential['cookie']=='expired': raise SessionExpired()
    return snap(credential['room'])
   obj.bridge_api=api
-  with patch('astrbot_plugin_electricity.main.fetch_balance',fetch),patch('astrbot_plugin_electricity.worker.fetch_balance',fetch):
+  with patch('astrbot_plugin_electricity.main.fetch_balance',fetch),patch('astrbot_plugin_electricity.worker.fetch_balance',fetch),patch('astrbot_plugin_electricity.session_audit.fetch_balance',fetch):
    await obj.binding_tick()
    assert obj.workers['1'].db.execute('SELECT notice FROM checks').fetchone()[0]=='sent'
    assert (folder/'credentials.json').read_bytes()==original

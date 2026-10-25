@@ -23,6 +23,11 @@ def parse_balance(html, expected_room):
     room=re.search(r'<span\b[^>]*\bid=[\"\x27]roomaddr[\"\x27][^>]*>(.*?)</span>',html,re.S|re.I)
     if not room: raise SessionExpired('missing balance page')
     room=unescape(re.sub(r'<[^>]+>','',room.group(1))).strip()
+    # The upstream returns HTTP 200 and a full balance template even without
+    # a valid session; its room label becomes "&nbspundefined-电表".
+    # Never classify this placeholder as an actual change of room.
+    if not room or re.search(r'\b(?:undefined|null|nan)\b', room, re.I):
+        raise SessionExpired('missing authenticated room')
     if room != expected_room: raise WrongMeter('selected meter changed')
     parser=Text();parser.feed(html);text=' '.join(parser.parts)
     values={}
